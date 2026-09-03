@@ -1,3 +1,5 @@
 _site/
+__pycache__/
+*.pyc
 *.tar.gz
 *.sha256
