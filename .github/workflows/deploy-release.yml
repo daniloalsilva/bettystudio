@@ -1,0 +1,40 @@
+name: Deploy release to production
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download exact artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" --pattern "bettystudio-${VERSION}.*"
+          sha256sum --check --strict "bettystudio-${VERSION}.sha256"
+          mkdir site
+          tar -C site -xzf "bettystudio-${VERSION}.tar.gz"
+      - name: Publish production
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.DEPLOY_TOKEN }}
+          external_repository: daniloalsilva/bettystudio.com.br
+          publish_branch: main
+          publish_dir: site
+          force_orphan: true
+      - name: Smoke test production
+        shell: bash
+        run: |
+          url="https://daniloalsilva.github.io/bettystudio.com.br/"
+          for attempt in $(seq 1 30); do
+            curl -fsSL "$url" >/dev/null && exit 0
+            sleep 10
+          done
+          exit 1

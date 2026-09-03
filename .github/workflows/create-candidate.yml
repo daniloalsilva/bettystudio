@@ -1,0 +1,60 @@
+name: Create preview candidate
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+concurrency:
+  group: preview-candidate
+  cancel-in-progress: false
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        shell: bash
+        run: |
+          version="v$(date -u +%Y.%m.%d).${GITHUB_RUN_NUMBER}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "url=https://daniloalsilva.github.io/bettystudio/${version}/" >> "$GITHUB_OUTPUT"
+      - run: make test
+      - name: Package exact release artifact
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          printf '{"version":"%s","commit":"%s","environment":"production"}\n' "$version" "$GITHUB_SHA" > _site/version.json
+          tar -C _site -czf "bettystudio-${version}.tar.gz" .
+          sha256sum "bettystudio-${version}.tar.gz" > "bettystudio-${version}.sha256"
+      - name: Prepare versioned preview
+        shell: bash
+        run: |
+          mkdir -p "preview/${{ steps.version.outputs.version }}"
+          cp -a _site/. "preview/${{ steps.version.outputs.version }}/"
+          printf '<meta http-equiv="refresh" content="0;url=%s">\n' "${{ steps.version.outputs.url }}" > preview/index.html
+      - name: Publish preview
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: preview
+          keep_files: true
+      - name: Smoke test preview
+        shell: bash
+        run: |
+          url="${{ steps.version.outputs.url }}"
+          for attempt in $(seq 1 30); do
+            curl -fsSL "${url}" >/dev/null && break
+            test "$attempt" -eq 30 && exit 1
+            sleep 10
+          done
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ steps.version.outputs.version }}"
+          "bettystudio-${{ steps.version.outputs.version }}.tar.gz"
+          "bettystudio-${{ steps.version.outputs.version }}.sha256"
+          --draft --target "$GITHUB_SHA"
+          --title "Betty Studio ${{ steps.version.outputs.version }}"
+          --notes "Preview: ${{ steps.version.outputs.url }}"
